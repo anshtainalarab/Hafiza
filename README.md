@@ -1,6 +1,36 @@
-# حافظة
+# حافظة Hafiza
 
-تطبيق حافظة عربي لويندوز يحفظ آخر النصوص والصور المنسوخة، مع تبويبات قابلة للتسمية والتثبيت والبحث واللصق السريع.
+![Hafiza clipboard manager screenshot](docs/hafiza-screenshot.png)
+
+## English
+
+Hafiza is a clipboard manager for Windows that saves copied text, images, and files. Organize items in named tabs and folders, pin important items, search your history, and paste back into the app you were using.
+
+### Download and install
+
+[Download the latest Windows x64 release](https://github.com/anshtainalarab/Hafiza/releases/latest), then run `Hafiza-Setup-*.exe`. The installer includes the .NET runtime, so users do not need to install it separately.
+
+### Use
+
+- Copy text, an image, or files, then press `Ctrl + Shift + V` to open Hafiza.
+- Click an item to paste it into the previously active window.
+- Create tabs with `+`, add items to them from the `•••` menu, and rename or remove tabs with a right click.
+- Pin items within a tab, search saved items, and drag cards to reorder them.
+- Closing the window keeps Hafiza running in the tray; use the tray icon to exit fully.
+
+### Build from source
+
+On Windows 10/11 with the .NET 8 SDK, run:
+
+```powershell
+dotnet build .\Hafiza\Hafiza.csproj -c Release
+```
+
+Clipboard history stays on your device in `%LOCALAPPDATA%\Hafiza`; the app does not send it to the internet.
+
+## العربية
+
+حافظة تطبيق لويندوز يحفظ النصوص والصور والملفات المنسوخة، مع تبويبات وفولدرات قابلة للتنظيم والتثبيت والبحث واللصق السريع.
 
 ## التحميل
 
