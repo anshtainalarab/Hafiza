@@ -1,0 +1,18 @@
+# Build and generated test output
+Hafiza/bin/
+Hafiza/obj/
+ReviewChecks/
+.dotnet/
+.dotnet-home/
+.tools/
+Release/
+CODE_REVIEW_*.md
+dotnet-install.ps1
+
+# Temporary media and local verification files
+tmp-video-frames/
+.icon-verification.png
+
+# Historical local snapshots should stay outside the working project
+Backups/
+

@@ -1,0 +1,33 @@
+<Window x:Class="Hafiza.TabNameDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Tab Name" Width="390" Height="205"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" FontFamily="{StaticResource InterfaceFont}"
+        TextOptions.TextFormattingMode="Display" TextOptions.TextRenderingMode="ClearType">
+    <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource SurfaceBorderBrush}" BorderThickness="1" CornerRadius="18" Padding="24">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="28" ShadowDepth="8" Opacity="0.42" Color="Black" />
+        </Border.Effect>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="PromptText" Text="Tab Name" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource PrimaryBrush}" />
+            <TextBox x:Name="NameBox" Grid.Row="1" Height="43" Margin="0,16,0,14"
+                     VerticalContentAlignment="Center" Padding="12,0" FontSize="15"
+                     Foreground="{DynamicResource PrimaryBrush}" Background="{DynamicResource CanvasBrush}" BorderBrush="{DynamicResource SurfaceBorderBrush}"
+                     SelectionBrush="{DynamicResource AccentBrush}" CaretBrush="{DynamicResource AccentBrush}" />
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Content="{DynamicResource Loc_DialogSave}" Width="82" Height="38" Margin="8,0,0,0" IsDefault="True"
+                        Background="{DynamicResource AccentBrush}" Foreground="{DynamicResource CheckBoxMarkBrush}" BorderThickness="0"
+                        FontWeight="SemiBold" Click="Save_Click" />
+                <Button Content="{DynamicResource Loc_DialogCancel}" Width="82" Height="38" IsCancel="True"
+                        Background="{DynamicResource SectionBackgroundBrush}" Foreground="{DynamicResource PrimaryBrush}" BorderThickness="0" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

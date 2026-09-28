@@ -1,0 +1,266 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using System.Windows;
+using Hafiza;
+using Hafiza.Models;
+using Hafiza.Services;
+
+internal static class ReviewProgram
+{
+    static object? Call(object o, string name, params object?[] args) => o.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(o, args);
+    static T Field<T>(object o, string name) => (T)o.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(o)!;
+    static void SetField(object o, string name, object? val) => o.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(o, val);
+    static void Check(string name, bool passed) { Console.WriteLine($"{(passed ? "PASS" : "FAIL")}: {name}"); if (!passed) Environment.ExitCode = 1; }
+    static ClipboardEntry Entry(string id) => new() { Id = id, Text = id, Hash = (string)typeof(MainWindow).GetMethod("TextContentHash", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { id })!, IsInAllTab = false, TabIds = new() { "tab" } };
+    [STAThread]
+    public static void Main()
+    {
+        var app = new App(); app.InitializeComponent();
+        var w = new MainWindow();
+        var entries = Field<List<ClipboardEntry>>(w, "_entries");
+        var folders = Field<List<ClipboardFolder>>(w, "_folders");
+        var batches = Field<List<DeletedBatch>>(w, "_undoBatches");
+        w.Tabs.Add(new ClipboardTab { Id = "tab", Name = "Test" });
+        var child = Entry("child"); child.FolderIdsByTab["tab"] = "folder";
+        entries.Add(child); folders.Add(new ClipboardFolder { Id = "folder", TabId = "tab", Name = "Folder" });
+        Call(w, "SelectTab", "tab");
+        Field<System.Windows.Controls.TextBox>(w, "SearchBox").Text = "child";
+        Check("tab search includes matching folder child", w.VisibleItems.OfType<ClipboardEntry>().SingleOrDefault() == child);
+        Field<System.Windows.Controls.TextBox>(w, "SearchBox").Clear();
+        Call(w, "DeleteEntries", new List<ClipboardEntry> { child }, false);
+        Call(w, "UndoDeleteButton_Click", w, new RoutedEventArgs());
+        Check("undo restores original folder assignment", child.FolderIdsByTab.TryGetValue("tab", out var restoredFolder) && restoredFolder == "folder");
+        var child2 = Entry("child2"); child2.FolderIdsByTab["tab"] = "folder"; entries.Add(child2);
+        Call(w, "RefreshEntries");
+        Call(w, "MoveEntriesBy", new List<ClipboardEntry> { child2 }, -1);
+        var folderOrder = (List<ClipboardEntry>)Call(w, "GetOrderedTabEntries", "tab")!;
+        Check("move action reorders cards inside an expanded-folder context", folderOrder.Take(2).SequenceEqual(new[] { child2, child }));
+        batches.Clear(); entries.Clear(); folders.Clear();
+        var a = Entry("a"); var b = Entry("b"); var c = Entry("c");
+        entries.AddRange(new[] { a, b, c });
+        Field<Dictionary<string,List<string>>>(w, "_tabEntryOrders").Clear();
+        Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders").Clear();
+        Call(w, "RefreshEntries");
+        Call(w, "MoveEntriesBy", new List<ClipboardEntry> { c }, -1);
+        Check("move-up changes visible custom-tab order by one step", w.VisibleItems.OfType<ClipboardEntry>().Select(e => e.Id).SequenceEqual(new[] { "a", "c", "b" }));
+        Call(w, "DeleteEntries", new List<ClipboardEntry> { a }, false);
+        Call(w, "UndoDeleteButton_Click", w, new RoutedEventArgs());
+        Check("undo restores unified-list position", w.VisibleItems.OfType<ClipboardEntry>().First().Id == "a");
+        Call(w, "DeleteEntries", new List<ClipboardEntry> { a }, false);
+        Call(w, "AddTextEntry", a.Text, null, null);
+        Call(w, "UndoDeleteButton_Click", w, new RoutedEventArgs());
+        Check("delete then recopy then undo merges duplicate content", entries.Count(e => e.Hash == a.Hash) == 1);
+        batches.Clear();
+        Call(w, "DeleteEntries", new List<ClipboardEntry> { b }, false);
+        Call(w, "DeleteTab", w.Tabs.Single());
+        Call(w, "UndoDeleteButton_Click", w, new RoutedEventArgs());
+        Check("undo after deleting tab restores item to All", entries.Any(e => e.Hash == b.Hash && e.IsInAllTab) && entries.All(e => !e.TabIds.Contains("tab")));
+        var store = new StorageService();
+        var image = new ClipboardEntry { Kind = "image", ImagePath = store.SaveImageBytes(new byte[] {1,2,3}, "orphan") };
+        store.Save(new AppState { Entries = new() { image } });
+        store.DeleteImage(image);
+        store.Save(new AppState());
+        store.Save(new AppState());
+        Check("image is removed after it leaves current state and rolling backup", !File.Exists(image.ImagePath));
+        var fitted = ((double minimum, double value))typeof(MainWindow).GetMethod("FitDimension", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { 735d, 480d, 450d, 16d })!;
+        Check("small work area produces valid window dimensions", fitted.minimum <= fitted.value && fitted.value <= 434d);
+        Check("Windows modifier is rejected", !HotKeyFormatter.TryGetModifiers(System.Windows.Input.ModifierKeys.Control, true, out _));
+        var importedSettings = new AppState { MaxEntries = 777, CardDensity = "large", PopupPosition = "center", HotKeyModifiers = 1, HotKeyVirtualKey = 0x42, WindowWidth = 500, WindowHeight = 600 };
+        var liveSettings = new AppState();
+        typeof(MainWindow).GetMethod("CopySettings", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { liveSettings, importedSettings });
+        Check("import applies settings to live state", liveSettings.MaxEntries == 777 && liveSettings.CardDensity == "large" && liveSettings.HotKeyVirtualKey == 0x42 && liveSettings.WindowHeight == 600);
+        var navigationItems = new List<object> { new ClipboardFolder(), a, new ClipboardFolder(), b };
+        var nextEntry = (int)typeof(MainWindow).GetMethod("FindNextEntryIndex", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { navigationItems, 1, 1 })!;
+        Check("keyboard navigation skips folders and reaches later cards", nextEntry == 3);
+        var hidesVisiblePalette = (bool)typeof(MainWindow).GetMethod("ShouldHidePalette", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { true })!;
+        Check("visible no-activate palette toggles closed", hidesVisiblePalette);
+        var visibleFolderTemplate = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "MainWindow.xaml"));
+        Check("visible folder template accepts card drops", visibleFolderTemplate.Contains("FlowDirection=\"RightToLeft\" AllowDrop=\"True\"") && visibleFolderTemplate.Contains("DragOver=\"Folder_DragOver\" Drop=\"Folder_Drop\""));
+        folders.Clear(); entries.Clear();
+        w.Tabs.Add(new ClipboardTab { Id = "tab", Name = "Tab" });
+        Call(w, "SelectTab", "tab");
+        var f1 = new ClipboardFolder { Id = "f1", TabId = "tab", Name = "Folder 1" };
+        var f2 = new ClipboardFolder { Id = "f2", TabId = "tab", Name = "Folder 2" };
+        folders.AddRange(new[] { f1, f2 });
+        var entryInF1 = Entry("search_match_in_f1"); entryInF1.FolderIdsByTab["tab"] = "f1";
+        var entryInF2 = Entry("search_match_in_f2"); entryInF2.FolderIdsByTab["tab"] = "f2";
+        entries.AddRange(new[] { entryInF1, entryInF2 });
+        SetField(w, "_selectedFolderId", "f1");
+        Field<System.Windows.Controls.TextBox>(w, "SearchBox").Text = "search_match";
+        Call(w, "RefreshEntries");
+        var searchInFolderResults = w.VisibleItems.OfType<ClipboardEntry>().ToList();
+        Check("search inside folder is isolated to that folder", searchInFolderResults.Count == 1 && searchInFolderResults[0] == entryInF1);
+        SetField(w, "_selectedFolderId", null);
+        Field<System.Windows.Controls.TextBox>(w, "SearchBox").Clear();
+
+        folders.Clear(); entries.Clear(); batches.Clear();
+        var folderToDel = new ClipboardFolder { Id = "del_fold", TabId = "tab", Name = "Delete Me" };
+        folders.Add(folderToDel);
+        var cardInFold = Entry("card_in_folder"); cardInFold.FolderIdsByTab["tab"] = "del_fold";
+        entries.Add(cardInFold);
+        Call(w, "DeleteEntries", new List<ClipboardEntry> { cardInFold }, false);
+        batches[^1].DeletedFolders.Add(folderToDel);
+        folders.Remove(folderToDel);
+        Call(w, "UndoDeleteButton_Click", w, new RoutedEventArgs());
+        Check("undo restores folder object and card folder reference", folders.Any(f => f.Id == "del_fold") && cardInFold.FolderIdsByTab.TryGetValue("tab", out var foldRef) && foldRef == "del_fold");
+
+        w.Tabs.Add(new ClipboardTab { Id = "dest_tab", Name = "Dest Tab" });
+        var folderToMove = new ClipboardFolder { Id = "mov_fold", TabId = "tab", Name = "Move Fold" };
+        folders.Add(folderToMove);
+        var pinnedCard = Entry("pinned_card");
+        pinnedCard.FolderIdsByTab["tab"] = "mov_fold";
+        pinnedCard.PinnedTabIds.Add("tab");
+        entries.Add(pinnedCard);
+        Call(w, "MoveFolderToTab", folderToMove, "dest_tab");
+        Check("moving folder to another tab preserves card pinned status in target tab",
+            pinnedCard.FolderIdsByTab.TryGetValue("dest_tab", out var destFold) && destFold == "mov_fold" &&
+            pinnedCard.PinnedTabIds.Contains("dest_tab") && !pinnedCard.PinnedTabIds.Contains("tab"));
+
+        entries.Clear();
+        Field<Dictionary<string,List<string>>>(w, "_tabEntryOrders").Clear();
+        Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders").Clear();
+        var cardA = Entry("visual_a");
+        var cardB = Entry("visual_b");
+        var cardC = Entry("visual_c");
+        entries.AddRange(new[] { cardA, cardB, cardC });
+        var customOrder = new List<ClipboardEntry> { cardC, cardA, cardB };
+        Call(w, "SetTabOrder", "tab", customOrder);
+        Call(w, "RefreshEntries");
+        var list = Field<System.Windows.Controls.ListBox>(w, "HistoryList");
+        list.ItemsSource = w.VisibleItems;
+        list.SelectedItems.Add(cardA);
+        list.SelectedItems.Add(cardC);
+        var actionEntries = (List<ClipboardEntry>)Call(w, "GetActionEntries", cardA)!;
+        Check("GetActionEntries respects visual FilteredEntries order", actionEntries.SequenceEqual(new[] { cardC, cardA }));
+
+        folders.Clear(); entries.Clear();
+        var fA = new ClipboardFolder { Id = "fold_a", TabId = "tab", Name = "A", Order = 0 };
+        var fB = new ClipboardFolder { Id = "fold_b", TabId = "tab", Name = "B", Order = 1 };
+        folders.AddRange(new[] { fA, fB });
+        Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"] = new List<string> { "folder:fold_a", "folder:fold_b" };
+        Call(w, "MoveFoldersBy", new List<ClipboardFolder> { fB }, -1);
+        var libOrder = Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"];
+        Check("MoveFoldersBy moves folder up by one step in library order", libOrder[0] == "folder:fold_b" && libOrder[1] == "folder:fold_a");
+        Call(w, "MoveFoldersBy", new List<ClipboardFolder> { fB }, 1);
+        libOrder = Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"];
+        Check("MoveFoldersBy moves folder down by one step in library order", libOrder[0] == "folder:fold_a" && libOrder[1] == "folder:fold_b");
+        Call(w, "MoveFolderToEdge", fB, true);
+        libOrder = Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"];
+        Check("MoveFolderToEdge places folder at top and syncs order", libOrder[0] == "folder:fold_b" && fB.Order == 0);
+
+        folders.Clear(); entries.Clear();
+        var cardEdge1 = Entry("edge_1");
+        var cardEdge2 = Entry("edge_2");
+        var cardEdge3 = Entry("edge_3");
+        entries.AddRange(new[] { cardEdge1, cardEdge2, cardEdge3 });
+        Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"] = new List<string> { "folder:fold_a", "entry:edge_1", "entry:edge_2", "entry:edge_3" };
+        folders.Add(fA);
+        Call(w, "RefreshEntries");
+        Call(w, "MoveEntriesToEdge", new List<ClipboardEntry> { cardEdge3 }, true);
+        libOrder = Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"];
+        Check("MoveEntriesToEdge toTop moves card to very first position of tab before folders", libOrder[0] == "entry:edge_3");
+        Call(w, "MoveEntriesToEdge", new List<ClipboardEntry> { cardEdge3 }, false);
+        libOrder = Field<Dictionary<string,List<string>>>(w, "_tabLibraryOrders")["tab"];
+        Check("MoveEntriesToEdge toBottom moves card to very last position of tab", libOrder[^1] == "entry:edge_3");
+
+        w.WindowState = WindowState.Minimized;
+        Call(w, "ShowPalette", false);
+        Check("ShowPalette restores minimized window to normal", w.WindowState == WindowState.Normal);
+        Call(w, "HandleTrayLeftClick");
+        Check("HandleTrayLeftClick dispatches safely without parameter mismatch", true);
+
+        var freshState = new AppState();
+        Check("default state language is English", freshState.Language == "en");
+        Check("default state theme is Dark", freshState.Theme == "dark");
+
+        LocalizationService.ApplyLanguage("en");
+        Check("English sets LTR flow direction and is not Arabic", LocalizationService.CurrentFlowDirection == FlowDirection.LeftToRight && !LocalizationService.IsArabic);
+        LocalizationService.ApplyLanguage("ar");
+        Check("Arabic sets RTL flow direction and is Arabic", LocalizationService.CurrentFlowDirection == FlowDirection.RightToLeft && LocalizationService.IsArabic);
+
+        ThemeService.ApplyTheme("light");
+        Check("ThemeService applies light theme", ThemeService.CurrentTheme == "light" && !ThemeService.IsDark);
+        ThemeService.ApplyTheme("dark");
+        Check("ThemeService applies dark theme", ThemeService.CurrentTheme == "dark" && ThemeService.IsDark);
+
+        var testTarget = new AppState { Theme = "dark", Language = "en" };
+        var testSource = new AppState { Theme = "light", Language = "ar" };
+        typeof(MainWindow).GetMethod("CopySettings", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { testTarget, testSource });
+        Check("CopySettings preserves Theme and Language", testTarget.Theme == "light" && testTarget.Language == "ar");
+
+        Call(w, "ApplyLanguage", "en");
+        Check("ApplyLanguage sets MainWindow FlowDirection to LeftToRight", w.FlowDirection == FlowDirection.LeftToRight);
+        Call(w, "ApplyLanguage", "ar");
+        Check("ApplyLanguage sets MainWindow FlowDirection to RightToLeft", w.FlowDirection == FlowDirection.RightToLeft);
+
+        Call(w, "ApplyTheme", "dark");
+        Call(w, "ThemeToggle_Click", w, new RoutedEventArgs());
+        Check("ThemeToggle_Click flips theme", ThemeService.CurrentTheme == "light");
+        Call(w, "ThemeToggle_Click", w, new RoutedEventArgs());
+        Check("ThemeToggle_Click flips back to dark", ThemeService.CurrentTheme == "dark");
+
+        Call(w, "ApplyLanguage", "ar");
+        Call(w, "LanguageToggle_Click", w, new RoutedEventArgs());
+        Check("LanguageToggle_Click flips language to en", LocalizationService.CurrentLanguage == "en");
+        Call(w, "LanguageToggle_Click", w, new RoutedEventArgs());
+        Check("LanguageToggle_Click flips language back to ar", LocalizationService.CurrentLanguage == "ar");
+
+        w.Tabs.Clear();
+        for (var i = 1; i <= 5; i++) w.Tabs.Add(new ClipboardTab { Id = $"tab_{i}", Name = $"Tab {i}" });
+        var moreBtn = Field<System.Windows.Controls.Button>(w, "MoreTabsButton");
+        Check("5 custom tabs plus All (6 total tabs) keeps MoreTabsButton collapsed", w.PrimaryTabs.Count == 5 && w.OverflowTabs.Count == 0 && moreBtn.Visibility == Visibility.Collapsed);
+        var sixthTab = new ClipboardTab { Id = "tab_6", Name = "Tab 6" };
+        w.Tabs.Add(sixthTab);
+        Check("6th custom tab (7th total tab) moves to OverflowTabs and shows MoreTabsButton", w.PrimaryTabs.Count == 5 && w.OverflowTabs.Count == 1 && moreBtn.Visibility == Visibility.Visible);
+        Call(w, "SelectTab", "tab_6");
+        Check("selecting overflow tab marks MoreTabsButton as selected", Equals(moreBtn.Tag, "selected"));
+        Check("MoreTabsButton content remains three dots without tab name", Equals(moreBtn.Content, "\u2022\u2022\u2022"));
+
+        entries.Clear();
+        var nav1 = Entry("nav1"); nav1.IsInAllTab = true;
+        var nav2 = Entry("nav2"); nav2.IsInAllTab = true;
+        var nav3 = Entry("nav3"); nav3.IsInAllTab = true;
+        entries.AddRange(new[] { nav1, nav2, nav3 });
+        Call(w, "SelectTab", (string?)null);
+        Call(w, "RefreshEntries");
+        var histList = Field<System.Windows.Controls.ListBox>(w, "HistoryList");
+        histList.SelectedIndex = -1;
+        var downKeyArgs = new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, System.Windows.Input.Keyboard.PrimaryDevice.ActiveSource!, 0, System.Windows.Input.Key.Down) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+        Call(w, "Window_PreviewKeyDown", w, downKeyArgs);
+        Check("Down arrow selects first entry from initial state", histList.SelectedIndex == 0);
+        Call(w, "Window_PreviewKeyDown", w, downKeyArgs);
+        Check("Down arrow moves to second entry", histList.SelectedIndex == 1);
+        var upKeyArgs = new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, System.Windows.Input.Keyboard.PrimaryDevice.ActiveSource!, 0, System.Windows.Input.Key.Up) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent };
+        Call(w, "Window_PreviewKeyDown", w, upKeyArgs);
+        Check("Up arrow moves back to first entry", histList.SelectedIndex == 0);
+
+        Check("HistoryList uses pixel-based scroll unit", System.Windows.Controls.VirtualizingPanel.GetScrollUnit(histList) == System.Windows.Controls.ScrollUnit.Pixel);
+        Check("HistoryList enables vertical panning for tablet and touch", System.Windows.Controls.ScrollViewer.GetPanningMode(histList) == System.Windows.Controls.PanningMode.VerticalOnly);
+
+        var oldImagePath = store.SaveImageBytes(new byte[] { 1, 2, 3 }, "shared-image");
+        store.Save(new AppState { Entries = new() { new ClipboardEntry { Kind = "image", ImagePath = oldImagePath } } });
+        var importFile = Path.Combine(Path.GetDirectoryName(store.StatePath)!, "collision.hafiza");
+        var incomingState = new AppState { Entries = new() { new ClipboardEntry { Kind = "image", ImagePath = oldImagePath } } };
+        using (var archive = ZipFile.Open(importFile, ZipArchiveMode.Create))
+        {
+            using (var writer = new StreamWriter(archive.CreateEntry("history.json").Open()))
+                writer.Write(JsonSerializer.Serialize(incomingState));
+            using var imageStream = archive.CreateEntry("Images/shared-image.png").Open();
+            imageStream.Write(new byte[] { 4, 5, 6 });
+        }
+        store.ImportBackup(importFile);
+        var importedImagePath = store.Load().Entries.Single().ImagePath!;
+        Check("imported image uses a distinct path and keeps previous image bytes",
+            importedImagePath != oldImagePath && File.ReadAllBytes(importedImagePath).SequenceEqual(new byte[] { 4, 5, 6 }) &&
+            File.ReadAllBytes(oldImagePath).SequenceEqual(new byte[] { 1, 2, 3 }));
+        var previousState = JsonSerializer.Deserialize<AppState>(File.ReadAllText(Path.Combine(store.DataDirectory, "history.backup.json")))!;
+        Check("rolling backup still points to its original image", previousState.Entries.Single().ImagePath == oldImagePath);
+
+        app.Shutdown();
+    }
+}
